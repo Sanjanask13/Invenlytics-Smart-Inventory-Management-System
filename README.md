@@ -56,7 +56,6 @@ invenlytics/
 |  |- public/
 |  `- src/
 |- dataset/
-|- seed_data.py
 `- README.md
 ```
 
@@ -196,21 +195,6 @@ The frontend will start on `http://localhost:3000`.
 The repository includes:
 
 - `dataset/inventory_data.csv`
-- `dataset/tft_data_set.csv`
-- `seed_data.py`
-
-The seed script is designed to create:
-
-- one demo merchant
-- one demo store
-- 20 sample products
-- 30 days of bill, sales, and inventory activity
-
-Run it from the project root after the backend database is ready:
-
-```bash
-python seed_data.py
-```
 
 ## Main API endpoints
 
@@ -270,7 +254,6 @@ python seed_data.py
 ## Current repo notes
 
 - `backend/requriements.txt` exists but is empty and misspelled. Setup currently depends on manual package installation.
-- `seed_data.py` currently begins with `jfrom __future__ import annotations`, which will raise a syntax error until corrected.
 - The backend applies a few schema-fix helpers at startup for columns like `barcode`, supplier fields, pricing fields, and sales profit fields.
 - Merchant auth is session-based on the backend, while the frontend also stores a lightweight token-like value in local storage for route protection.
 

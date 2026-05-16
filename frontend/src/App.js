@@ -12,7 +12,6 @@ import ReorderRecommendations from "./pages/ReorderRecommendations";
 import Predictions from "./pages/Predictions";
 import Discussion from "./pages/Discussion";
 import { isMerchantAuthenticated } from "./utils/auth";
-
 function MerchantProtectedRoute({ children }) {
   if (!isMerchantAuthenticated()) {
     return <Navigate to="/login" replace />;
