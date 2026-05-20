@@ -21,11 +21,11 @@ const DEFAULT_DASHBOARD = {
   monthly_top_products: [],
   total_profit: 0,
   profit_products: [],
-  loss_products: []
+  loss_products: [],
+  understock_products: []
 };
 
 const DEFAULT_PREDICTIONS = {
-  understock_risk: [],
   overstock_risk: []
 };
 
@@ -266,9 +266,11 @@ function Dashboard() {
             <RiskTable
               title="Understock Products"
               loading={loading}
-              rows={predictions.understock_risk}
+              rows={dashboard.understock_products}
               tone="#b45309"
               emptyMessage="No understock products right now."
+              metricLabel="Threshold"
+              renderMetric={(row) => Number(row.threshold || 0).toFixed(0)}
             />
 
             <RiskTable
@@ -348,7 +350,15 @@ function ProductTable({ title, loading, rows, tone, emptyMessage }) {
   );
 }
 
-function RiskTable({ title, loading, rows, tone, emptyMessage }) {
+function RiskTable({
+  title,
+  loading,
+  rows,
+  tone,
+  emptyMessage,
+  metricLabel = "Predicted Demand",
+  renderMetric,
+}) {
   return (
     <div className="theme-table-card" style={tableCardStyle}>
       <div style={{ display: "grid", gap: "14px" }}>
@@ -368,7 +378,7 @@ function RiskTable({ title, loading, rows, tone, emptyMessage }) {
               <tr>
                 <th style={thStyle}>Product</th>
                 <th style={thStyle}>Current Stock</th>
-                <th style={thStyle}>Predicted Demand</th>
+                <th style={thStyle}>{metricLabel}</th>
               </tr>
             </thead>
             <tbody>
@@ -377,7 +387,9 @@ function RiskTable({ title, loading, rows, tone, emptyMessage }) {
                   <td style={tdStyle}>{row.product_name}</td>
                   <td style={tdStyle}>{Number(row.stock || 0).toFixed(0)}</td>
                   <td style={{ ...tdStyle, color: tone, fontWeight: 700 }}>
-                    {Number(row.predicted_demand || 0).toFixed(2)}
+                    {renderMetric
+                      ? renderMetric(row)
+                      : Number(row.predicted_demand || 0).toFixed(2)}
                   </td>
                 </tr>
               ))}

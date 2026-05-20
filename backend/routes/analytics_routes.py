@@ -185,24 +185,49 @@ def _build_demand_suggestions(products):
     for product in products:
         latest_inventory = _get_latest_inventory(product.product_id)
         current_stock = int(latest_inventory.inventory_level or 0) if latest_inventory else 0
+        threshold = int(product.threshold or 0)
         predicted_demand = _estimate_predicted_demand(product, latest_inventory)
-        reorder_gap = ceil(max(predicted_demand - current_stock, 0))
+        target_stock = max(threshold, ceil(float(predicted_demand or 0)))
+        suggested_restock = max(target_stock - current_stock, 0)
 
         if predicted_demand <= 0:
             continue
 
-        if predicted_demand > max(current_stock, float(product.threshold or 0)):
+        if predicted_demand > current_stock and suggested_restock > 0:
             suggestions.append({
                 "product_id": product.product_id,
                 "product_name": product.product_name,
                 "current_stock": current_stock,
+                "threshold": threshold,
                 "predicted_demand": round(float(predicted_demand), 2),
-                "suggested_restock": int(reorder_gap),
-                "suggestion": "Increase stock because projected demand is higher than current coverage",
+                "suggested_restock": int(suggested_restock),
+                "suggestion": "Increase stock because forecasted demand is likely to push this product below safe coverage",
             })
 
     suggestions.sort(key=lambda item: item["suggested_restock"], reverse=True)
     return suggestions
+
+
+def _build_current_understock_products(products):
+    understock_products = []
+
+    for product in products:
+        latest_inventory = _get_latest_inventory(product.product_id)
+        current_stock = int(latest_inventory.inventory_level or 0) if latest_inventory else 0
+        threshold = int(product.threshold or 0)
+
+        if current_stock < threshold:
+            understock_products.append({
+                "product_id": product.product_id,
+                "product_name": product.product_name,
+                "stock": current_stock,
+                "threshold": threshold,
+            })
+
+    understock_products.sort(
+        key=lambda item: (item["stock"] - item["threshold"], item["stock"]),
+    )
+    return understock_products
 
 
 def _build_discount_suggestions(products):
@@ -381,6 +406,7 @@ def dashboard(store_id):
             "total_profit": 0.0,
             "profit_products": [],
             "loss_products": [],
+            "understock_products": [],
         }), 200
 
     total_profit = (
@@ -397,6 +423,7 @@ def dashboard(store_id):
     weekly_top_products = _aggregate_top_products(store_id, last_7_days, limit=5)
     monthly_top_products = _aggregate_top_products(store_id, last_30_days, limit=5)
     profit_products, loss_products = _aggregate_profit_products(store_id)
+    understock_products = _build_current_understock_products(products)
 
     return jsonify({
         "store_id": store_id,
@@ -405,6 +432,7 @@ def dashboard(store_id):
         "total_profit": round(float(total_profit), 2),
         "profit_products": profit_products,
         "loss_products": loss_products,
+        "understock_products": understock_products,
     }), 200
 
 
@@ -442,6 +470,7 @@ def predictions_overview(store_id):
         row = {
             "product_id": product.product_id,
             "product_name": product.product_name,
+            "threshold": int(product.threshold or 0),
             "current_stock": int(current_stock or 0),
             "predicted_demand": round(float(predicted_demand or 0), 2),
             "next_week_demand": round(float((predicted_demand or 0) * 7), 2),
@@ -494,11 +523,17 @@ def predictions_overview(store_id):
             "product_id": item["product_id"],
             "product_name": item["product_name"],
             "stock": item["current_stock"],
+            "threshold": item["threshold"],
             "predicted_demand": item["predicted_demand"],
         }
         for item in forecast_rows
-        if item["predicted_demand"] > item["current_stock"]
+        if item["current_stock"] >= item["threshold"]
+        and item["predicted_demand"] > item["current_stock"]
     ]
+    understock_risk.sort(
+        key=lambda item: item["predicted_demand"] - item["stock"],
+        reverse=True,
+    )
 
     overstock_risk = [
         {

@@ -20,11 +20,14 @@ function BarcodeScanner() {
   const [billHistory, setBillHistory] = useState([]);
   const [selectedInvoice, setSelectedInvoice] = useState(null);
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
+  const [showConfirmationModal, setShowConfirmationModal] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [historyError, setHistoryError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [anomalyWarning, setAnomalyWarning] = useState("");
+  const [confirmationWarnings, setConfirmationWarnings] = useState([]);
+  const [pendingBillPayload, setPendingBillPayload] = useState(null);
   const [fieldErrors, setFieldErrors] = useState({});
   const [toast, setToast] = useState({ tone: "success", message: "" });
   const isBusy = submitting;
@@ -47,13 +50,14 @@ function BarcodeScanner() {
   }, [error, historyError, message]);
 
   useEffect(() => {
-    if (!showInvoiceModal) {
+    if (!showInvoiceModal && !showConfirmationModal) {
       return undefined;
     }
 
     const handleEscape = (event) => {
       if (event.key === "Escape") {
         setShowInvoiceModal(false);
+        setShowConfirmationModal(false);
       }
     };
 
@@ -65,7 +69,7 @@ function BarcodeScanner() {
       document.body.style.overflow = previousOverflow || "auto";
       window.removeEventListener("keydown", handleEscape);
     };
-  }, [showInvoiceModal]);
+  }, [showConfirmationModal, showInvoiceModal]);
 
   const loadProducts = useCallback(async () => {
     const res = await API.get(`/products/${activeStoreId}`);
@@ -264,7 +268,7 @@ function BarcodeScanner() {
     setCart((current) => current.filter((_, itemIndex) => itemIndex !== index));
   };
 
-  const handleGenerateBill = async () => {
+  const handleGenerateBillLegacy = async () => {
     setSubmitting(true);
     setError("");
     setMessage("");
@@ -309,6 +313,92 @@ function BarcodeScanner() {
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const submitBill = async (payload, confirmationAccepted = false) => {
+    try {
+      const res = await API.post("/create-bill", {
+        ...payload,
+        confirmation_accepted: confirmationAccepted
+      });
+      console.log("Create bill response:", res.data);
+
+      if (res.data?.success) {
+        setSelectedInvoice(res.data.invoice);
+        setShowInvoiceModal(true);
+        setShowConfirmationModal(false);
+        setConfirmationWarnings([]);
+        setPendingBillPayload(null);
+        setAnomalyWarning(
+          res.data?.has_anomaly ? "Warning: Unusual transaction detected" : ""
+        );
+        setCart([]);
+        setMessage(res.data.message || `Bill ${res.data.bill_id} generated successfully.`);
+        await Promise.all([loadProducts(), loadBillHistory()]);
+      } else {
+        setError(res.data?.error || "Unable to generate bill.");
+      }
+    } catch (err) {
+      if (err.response?.status === 409 && err.response?.data?.requires_confirmation) {
+        setPendingBillPayload(payload);
+        setConfirmationWarnings(err.response?.data?.confirmation_warnings || []);
+        setShowConfirmationModal(true);
+        return;
+      }
+      console.error("Create bill failed:", err.response?.data || err.message);
+      setError(err.response?.data?.error || "Unable to generate bill.");
+    }
+  };
+
+  const handleGenerateBill = async () => {
+    setSubmitting(true);
+    setError("");
+    setMessage("");
+    setAnomalyWarning("");
+
+    if (!cart.length) {
+      setError("Add at least one item before generating a bill.");
+      setSubmitting(false);
+      return;
+    }
+
+    const payload = {
+      store_id: activeStoreId,
+      items: cart.map((item) => ({
+        product_id: item.product_id,
+        quantity: item.quantity,
+        price: item.unit_price,
+        discount: Number(item.discount || 0)
+      }))
+    };
+    console.log("Creating bill with payload:", payload);
+
+    try {
+      await submitBill(payload, false);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleConfirmBillGeneration = async () => {
+    if (!pendingBillPayload) {
+      return;
+    }
+
+    setSubmitting(true);
+    try {
+      await submitBill(pendingBillPayload, true);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleCancelConfirmation = () => {
+    setShowConfirmationModal(false);
+    setPendingBillPayload(null);
+    setConfirmationWarnings([]);
+    setMessage("Bill generation cancelled.");
+    setError("");
   };
 
   const handleViewInvoice = async (billId) => {
@@ -550,6 +640,50 @@ function BarcodeScanner() {
           </div>
 
         </div>
+        {showConfirmationModal && (
+          <div
+            style={invoiceModalBackdropStyle}
+            onClick={handleCancelConfirmation}
+            role="presentation"
+          >
+            <div
+              className="theme-card"
+              style={invoiceModalCardStyle}
+              onClick={(event) => event.stopPropagation()}
+              role="dialog"
+              aria-modal="true"
+              aria-label="Bill confirmation required"
+            >
+              <div style={invoiceModalHeaderStyle}>
+                <div>
+                  <h3 style={invoiceModalTitleStyle}>Confirmation Required</h3>
+                  <div style={invoiceModalSubtitleStyle}>
+                    Suspicious billing activity was detected. Please review these warnings before continuing.
+                  </div>
+                </div>
+                <button onClick={handleCancelConfirmation} style={invoiceCloseButtonStyle}>
+                  Close
+                </button>
+              </div>
+              <div style={confirmationListStyle}>
+                {confirmationWarnings.map((warning, index) => (
+                  <div key={`${warning.product_id}-${warning.scenario}-${index}`} style={confirmationItemStyle}>
+                    <strong>{warning.scenario}</strong>
+                    <div style={invoiceItemMetaStyle}>{warning.message}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={invoiceActionsStyle}>
+                <button onClick={handleCancelConfirmation} style={dangerButtonStyle}>
+                  Cancel
+                </button>
+                <button onClick={handleConfirmBillGeneration} style={invoicePrintButtonStyle}>
+                  Confirm And Generate
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         {showInvoiceModal && selectedInvoice && (
           <div
             style={invoiceModalBackdropStyle}
@@ -836,7 +970,18 @@ const invoiceTotalStyle = {
 const invoiceActionsStyle = {
   display: "flex",
   justifyContent: "flex-end",
+  gap: 12,
   marginTop: 8
+};
+const confirmationListStyle = {
+  display: "grid",
+  gap: 12
+};
+const confirmationItemStyle = {
+  border: `1px solid ${theme.colors.border}`,
+  borderRadius: 12,
+  padding: 14,
+  background: "#fffaf7"
 };
 const invoiceModalBackdropStyle = {
   position: "fixed",

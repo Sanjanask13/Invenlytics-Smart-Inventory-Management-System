@@ -1,4 +1,5 @@
 from datetime import datetime
+from math import ceil
 
 from database import db
 from ml_models.anomaly_model import detect_anomaly
@@ -8,6 +9,155 @@ from models.inventory_model import Inventory
 from models.prediction_model import Prediction
 from models.product_model import Product
 from models.sales_model import Sale
+
+
+def _latest_completed_sale(product_id):
+    return (
+        Sale.query.filter_by(product_id=product_id)
+        .order_by(Sale.date.desc(), Sale.sale_id.desc())
+        .first()
+    )
+
+
+def _latest_bill_item(product_id):
+    return (
+        BillItem.query.filter_by(product_id=product_id)
+        .order_by(BillItem.bill_item_id.desc())
+        .first()
+    )
+
+
+def _prepare_bill_items(items, store_id=None):
+    normalized_items = [_normalize_item(item) for item in items]
+
+    prepared_items = []
+    total_items = 0
+    total_amount = 0.0
+
+    for item in normalized_items:
+        product = _resolve_product(item, store_id=store_id)
+        last_inventory = (
+            Inventory.query.filter_by(product_id=product.product_id)
+            .order_by(Inventory.date.desc(), Inventory.inventory_id.desc())
+            .first()
+        )
+
+        previous_inventory = last_inventory.inventory_level if last_inventory else 0
+        if item["quantity"] > previous_inventory:
+            raise ValueError(f"Insufficient stock::{product.product_id}::{previous_inventory}")
+
+        prev_demand = resolve_prev_demand(product.product_id)
+        unit_price = (
+            float(item["price"])
+            if item["price"] is not None
+            else float(product.price)
+        )
+        unit_cost = float(product.cost_price or 0)
+        line_total = max(
+            unit_price * item["quantity"] * (1 - (item["discount"] / 100)),
+            0.0,
+        )
+        profit = (unit_price - unit_cost) * item["quantity"]
+
+        prepared_items.append({
+            "product": product,
+            "quantity": item["quantity"],
+            "discount": item["discount"],
+            "unit_price": unit_price,
+            "unit_cost": unit_cost,
+            "line_total": line_total,
+            "profit": profit,
+            "is_loss": profit < 0,
+            "prev_demand": prev_demand,
+            "previous_inventory": previous_inventory,
+            "new_inventory": previous_inventory - item["quantity"],
+            "last_inventory": last_inventory,
+        })
+
+        total_items += item["quantity"]
+        total_amount += line_total
+
+    return prepared_items, total_items, total_amount
+
+
+def _build_confirmation_warnings(prepared_items):
+    warnings = []
+
+    for prepared in prepared_items:
+        product = prepared["product"]
+        product_label = product.product_name or product.product_id
+        latest_inventory = prepared["last_inventory"]
+        previous_snapshot = None
+        if latest_inventory:
+            previous_snapshot = (
+                Inventory.query.filter(
+                    Inventory.product_id == product.product_id,
+                    Inventory.inventory_id != latest_inventory.inventory_id,
+                )
+                .order_by(Inventory.date.desc(), Inventory.inventory_id.desc())
+                .first()
+            )
+
+        latest_sale = _latest_completed_sale(product.product_id)
+        latest_bill_item = _latest_bill_item(product.product_id)
+
+        if latest_inventory and previous_snapshot:
+            stock_drop_without_sale = (
+                latest_inventory.inventory_level < previous_snapshot.inventory_level
+                and (latest_inventory.units_sold or 0) <= 0
+            )
+            no_recent_sale_record = not latest_sale or latest_sale.date < latest_inventory.date
+            no_recent_bill_record = not latest_bill_item
+            if stock_drop_without_sale and (no_recent_sale_record or no_recent_bill_record):
+                warnings.append({
+                    "product_id": product.product_id,
+                    "scenario": "Stock quantity decreased but no sales bill exists",
+                    "message": (
+                        f"{product_label} shows a recent stock drop without a matching billed sale. "
+                        "Please verify stock adjustments before continuing."
+                    ),
+                })
+
+        yesterday_units_sold = (
+            float(latest_inventory.units_sold or 0)
+            if latest_inventory
+            else 0.0
+        )
+        if yesterday_units_sold > 0 and prepared["quantity"] >= max(10, ceil(yesterday_units_sold * 1.8)):
+            warnings.append({
+                "product_id": product.product_id,
+                "scenario": "Sudden unusually high sales compared with yesterday",
+                "message": (
+                    f"{product_label} is selling {prepared['quantity']} units now versus "
+                    f"{int(yesterday_units_sold)} units in the latest recorded day."
+                ),
+            })
+
+        yesterday_discount = (
+            float(latest_inventory.discount or 0)
+            if latest_inventory
+            else 0.0
+        )
+        if prepared["discount"] >= 50 or prepared["discount"] >= yesterday_discount + 30:
+            warnings.append({
+                "product_id": product.product_id,
+                "scenario": "Huge discount applied compared with yesterday",
+                "message": (
+                    f"{product_label} now has {prepared['discount']:.2f}% discount compared with "
+                    f"{yesterday_discount:.2f}% in the latest recorded day."
+                ),
+            })
+
+    unique_warnings = []
+    seen = set()
+    for warning in warnings:
+        key = (warning["product_id"], warning["scenario"])
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_warnings.append(warning)
+
+    return unique_warnings
 
 
 def resolve_prev_demand(product_id):
@@ -156,54 +306,7 @@ def process_bill(items, sale_date=None, store_id=None):
     if sale_date is None:
         sale_date = datetime.now()
 
-    normalized_items = [_normalize_item(item) for item in items]
-
-    prepared_items = []
-    total_items = 0
-    total_amount = 0.0
-
-    for item in normalized_items:
-        product = _resolve_product(item, store_id=store_id)
-        last_inventory = (
-            Inventory.query.filter_by(product_id=product.product_id)
-            .order_by(Inventory.date.desc(), Inventory.inventory_id.desc())
-            .first()
-        )
-
-        previous_inventory = last_inventory.inventory_level if last_inventory else 0
-        if item["quantity"] > previous_inventory:
-            raise ValueError(f"Insufficient stock::{product.product_id}::{previous_inventory}")
-
-        prev_demand = resolve_prev_demand(product.product_id)
-        unit_price = (
-            float(item["price"])
-            if item["price"] is not None
-            else float(product.price)
-        )
-        unit_cost = float(product.cost_price or 0)
-        line_total = max(
-            unit_price * item["quantity"] * (1 - (item["discount"] / 100)),
-            0.0,
-        )
-        profit = (unit_price - unit_cost) * item["quantity"]
-
-        prepared_items.append({
-            "product": product,
-            "quantity": item["quantity"],
-            "discount": item["discount"],
-            "unit_price": unit_price,
-            "unit_cost": unit_cost,
-            "line_total": line_total,
-            "profit": profit,
-            "is_loss": profit < 0,
-            "prev_demand": prev_demand,
-            "previous_inventory": previous_inventory,
-            "new_inventory": previous_inventory - item["quantity"],
-            "last_inventory": last_inventory,
-        })
-
-        total_items += item["quantity"]
-        total_amount += line_total
+    prepared_items, total_items, total_amount = _prepare_bill_items(items, store_id=store_id)
 
     bill = Bill(
         bill_no=f"INV-{sale_date.strftime('%Y%m%d%H%M%S%f')}",
@@ -269,6 +372,17 @@ def process_bill(items, sale_date=None, store_id=None):
         except Exception:
             anomaly_status = "Detection failed"
 
+        # Use simple guardrails alongside the ML model so clearly suspicious
+        # demo cases are still surfaced even if the unsupervised model is lenient.
+        discount_is_extreme = prepared["discount"] >= 50
+        quantity_is_extreme = prepared["quantity"] >= max(
+            25,
+            ceil(prepared["previous_inventory"] * 0.6),
+        )
+        price_below_cost = prepared["unit_price"] < prepared["unit_cost"]
+        if discount_is_extreme or quantity_is_extreme or price_below_cost:
+            anomaly_status = "Anomaly Detected"
+
         prediction = Prediction(
             product_id=product.product_id,
             predicted_demand=predicted_demand,
@@ -322,4 +436,20 @@ def process_bill(items, sale_date=None, store_id=None):
         "invoice": build_bill_response(bill, invoice_items),
         "has_anomaly": bool(anomaly_warnings),
         "anomaly_warnings": anomaly_warnings,
+    }
+
+
+def preview_bill_confirmation(items, sale_date=None, store_id=None):
+    if not items:
+        raise ValueError("At least one bill item is required")
+
+    if sale_date is None:
+        sale_date = datetime.now()
+
+    prepared_items, _, _ = _prepare_bill_items(items, store_id=store_id)
+    warnings = _build_confirmation_warnings(prepared_items)
+
+    return {
+        "requires_confirmation": bool(warnings),
+        "warnings": warnings,
     }

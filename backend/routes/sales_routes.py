@@ -5,7 +5,7 @@ from flask import Blueprint, current_app, jsonify, request
 from database import db
 from models.billing_model import Bill, BillItem
 from models.product_model import Product
-from services.billing_service import process_bill
+from services.billing_service import preview_bill_confirmation, process_bill
 from services.tenant_service import merchant_login_required, resolve_merchant_context, resolve_store_id
 
 sales_bp = Blueprint("sales", __name__)
@@ -40,6 +40,7 @@ def _serialize_bill_row(bill):
 def create_bill():
     data = request.get_json(silent=True) or {}
     items = data.get("items") or []
+    confirmation_accepted = bool(data.get("confirmation_accepted"))
     try:
         _, store_id = resolve_merchant_context()
     except PermissionError as exc:
@@ -60,6 +61,16 @@ def create_bill():
         return jsonify({"success": False, "error": str(exc)}), 400
 
     try:
+        preview = preview_bill_confirmation(items=items, sale_date=sale_date, store_id=store_id)
+        if preview["requires_confirmation"] and not confirmation_accepted:
+            current_app.logger.info("Bill for store %s requires confirmation", store_id)
+            return jsonify({
+                "success": False,
+                "requires_confirmation": True,
+                "warning": "Please confirm this suspicious bill before it is generated.",
+                "confirmation_warnings": preview["warnings"],
+            }), 409
+
         result = process_bill(items=items, sale_date=sale_date, store_id=store_id)
         db.session.commit()
         current_app.logger.info("Bill %s created successfully", result["bill"].bill_id)
