@@ -102,6 +102,12 @@ function BarcodeScanner() {
     [products]
   );
 
+  const calculateLineTotal = (unitPrice, quantity, discount) =>
+    Math.max(
+      Number(unitPrice || 0) * Number(quantity || 0) * (1 - Number(discount || 0) / 100),
+      0
+    );
+
   const addToCart = (product, quantity = 1, discount = 0) => {
     if (!product) {
       return;
@@ -109,10 +115,7 @@ function BarcodeScanner() {
 
     const qty = Number(quantity);
     const discountPercent = Number(discount || 0);
-    const lineTotal = Math.max(
-      Number(product.price || 0) * qty * (1 - discountPercent / 100),
-      0
-    );
+    const lineTotal = calculateLineTotal(product.price, qty, discountPercent);
 
     setCart((current) => [
       ...current,
@@ -142,14 +145,60 @@ function BarcodeScanner() {
         }
 
         const nextQuantity = Math.max(1, Math.floor(parsedQuantity));
-        const nextLineTotal = Math.max(
-          Number(item.unit_price || 0) * nextQuantity * (1 - Number(item.discount || 0) / 100),
-          0
+        const nextLineTotal = calculateLineTotal(
+          item.unit_price,
+          nextQuantity,
+          item.discount
         );
 
         return {
           ...item,
           quantity: nextQuantity,
+          line_total: nextLineTotal
+        };
+      })
+    );
+  };
+
+  const handleDiscountChange = (index, value) => {
+    if (value === "") {
+      setCart((current) =>
+        current.map((item, itemIndex) => {
+          if (itemIndex !== index) {
+            return item;
+          }
+
+          return {
+            ...item,
+            discount: "",
+            line_total: calculateLineTotal(item.unit_price, item.quantity, 0)
+          };
+        })
+      );
+      return;
+    }
+
+    const parsedDiscount = Number(value);
+    if (!Number.isFinite(parsedDiscount) || parsedDiscount < 0) {
+      return;
+    }
+
+    setCart((current) =>
+      current.map((item, itemIndex) => {
+        if (itemIndex !== index) {
+          return item;
+        }
+
+        const nextDiscount = Math.min(parsedDiscount, 100);
+        const nextLineTotal = calculateLineTotal(
+          item.unit_price,
+          item.quantity,
+          nextDiscount
+        );
+
+        return {
+          ...item,
+          discount: nextDiscount,
           line_total: nextLineTotal
         };
       })
@@ -234,7 +283,7 @@ function BarcodeScanner() {
           product_id: item.product_id,
           quantity: item.quantity,
           price: item.unit_price,
-          discount: item.discount
+          discount: Number(item.discount || 0)
         }))
       };
       console.log("Creating bill with payload:", payload);
@@ -442,7 +491,20 @@ function BarcodeScanner() {
                         />
                       </td>
                       <td style={tdStyle}>Rs. {item.unit_price.toFixed(2)}</td>
-                      <td style={tdStyle}>{item.discount.toFixed(2)}%</td>
+                      <td style={tdStyle}>
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="0.01"
+                          value={item.discount === 0 ? "" : item.discount}
+                          onChange={(e) => handleDiscountChange(index, e.target.value)}
+                          onFocus={(e) => e.target.select()}
+                          placeholder="0"
+                          className="theme-input"
+                          style={discountInputStyle}
+                        />
+                      </td>
                       <td style={tdStyle}>Rs. {item.line_total.toFixed(2)}</td>
                       <td style={tdStyle}>
                         <button onClick={() => handleRemoveCartItem(index)} style={dangerButtonStyle}>
@@ -684,6 +746,14 @@ const thStyle = { textAlign: "left", padding: "12px 10px", borderBottom: `1px so
 const tdStyle = { padding: "12px 10px", borderBottom: `1px solid ${theme.colors.border}`, color: theme.colors.textDark };
 const qtyInputStyle = {
   width: 80,
+  padding: "10px 12px",
+  borderRadius: 10,
+  border: "1px solid #d4dde5",
+  background: "#fbfdff",
+  boxSizing: "border-box"
+};
+const discountInputStyle = {
+  width: 100,
   padding: "10px 12px",
   borderRadius: 10,
   border: "1px solid #d4dde5",
