@@ -68,7 +68,7 @@ function Discussion() {
         <div style={heroStyle}>
           <div>
             <div style={eyebrowStyle}>SUGGESTIONS</div>
-            <h2 style={titleStyle}>AI-backed retail insights for store {storeId}</h2>
+            <h2 style={titleStyle}>Retail insights for store {storeId}</h2>
             <p style={subtitleStyle}>
               Review profitability, bundle opportunities, pricing pressure, demand-led
               stock actions, and discount ideas in one place.
