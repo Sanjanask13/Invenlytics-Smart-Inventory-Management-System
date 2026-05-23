@@ -60,10 +60,31 @@ def train_apriori_from_bills(store_id=None, min_support=0.02, min_threshold=1.0)
     if rules.empty:
         return pd.DataFrame()
 
-    return rules.sort_values(
+    sorted_rules = rules.sort_values(
         by=["lift", "confidence", "support"],
         ascending=False,
     ).reset_index(drop=True)
+
+    print("===== Apriori Evaluation =====")
+    print("Total Transactions:", len(basket.index))
+    print("Frequent Itemsets:", len(frequent_items))
+    print("Generated Rules:", len(sorted_rules))
+    print()
+
+    for index, (_, row) in enumerate(sorted_rules.head(5).iterrows(), start=1):
+        antecedents = sorted(str(item) for item in row["antecedents"])
+        consequents = sorted(str(item) for item in row["consequents"])
+        print(f"Rule {index}")
+        print(f"[{', '.join(antecedents)}] -> [{', '.join(consequents)}]")
+        print("Support:", float(row["support"]))
+        print("Confidence:", float(row["confidence"]))
+        print("Lift:", float(row["lift"]))
+        print("Conviction:", float(row["conviction"]))
+        print()
+
+    print("=============================")
+
+    return sorted_rules
 
 
 def get_recommendations(product_id, store_id=None, min_support=0.02, min_threshold=1.0):

@@ -6,7 +6,7 @@ import xgboost as xgb
 
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
-from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
@@ -119,6 +119,7 @@ def _fit_pipeline(df, target_column):
     pipeline.fit(X_train, y_train)
 
     y_pred = pipeline.predict(X_test)
+    mae = mean_absolute_error(y_test, y_pred)
     mse = mean_squared_error(y_test, y_pred)
     rmse = mse ** 0.5
     r2 = r2_score(y_test, y_pred)
@@ -126,13 +127,16 @@ def _fit_pipeline(df, target_column):
     with MODEL_PATH.open("wb") as file_obj:
         pickle.dump(pipeline, file_obj)
 
-    print("\nModel Evaluation:")
+    print("===== XGBoost Evaluation =====")
+    print("MAE:", mae)
     print("RMSE:", rmse)
     print("R2 Score:", r2)
+    print("===============")
     print("\nModel trained and saved!")
 
     return {
         "rows_used": int(len(prepared)),
+        "mae": float(mae),
         "rmse": float(rmse),
         "r2": float(r2),
         "model_path": str(MODEL_PATH),

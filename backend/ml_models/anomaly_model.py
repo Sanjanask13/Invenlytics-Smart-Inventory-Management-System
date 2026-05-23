@@ -28,10 +28,22 @@ def train_anomaly_model(data_path):
         random_state=42,
     )
     model.fit(X_scaled)
+    predictions = model.predict(X_scaled)
+
+    total_records = len(predictions)
+    total_anomalies = int((predictions == -1).sum())
+    total_normal = int((predictions == 1).sum())
+    anomaly_percentage = (total_anomalies / total_records) * 100 if total_records else 0.0
 
     with MODEL_PATH.open("wb") as file_obj:
         pickle.dump((model, scaler), file_obj)
 
+    print("===== Anomaly Evaluation =====")
+    print("Total Records:", total_records)
+    print("Normal Records:", total_normal)
+    print("Anomalies Found:", total_anomalies)
+    print(f"Anomaly Percentage: {anomaly_percentage:.2f}%")
+    print("========================")
     print("Anomaly model trained and saved!")
 
 
